@@ -75,21 +75,22 @@ func init() {
 }
 
 // resolveVaultTarget resolves the project id and output root from cwd /
-// flags, erroring clearly when the cwd is not in a MOM project.
-func resolveVaultTarget() (projectID, root string, err error) {
+// flags, erroring clearly when the cwd is not in a MOM project. It also
+// resolves the vault storage location (ADR 0026) via resolveVaultLocation.
+func resolveVaultTarget() (projectID, root, vaultBase, vaultRef string, err error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", "", err
+		return "", "", "", "", err
 	}
-	id, sourceFile, found, rerr := project.ResolveProject(cwd)
+	binding, sourceFile, found, rerr := project.ResolveBinding(cwd)
 	if rerr != nil {
-		return "", "", rerr
+		return "", "", "", "", rerr
 	}
 
 	root = vaultRoot
 	if !found {
 		if vaultProject == "" || root == "" {
-			return "", "", fmt.Errorf(
+			return "", "", "", "", fmt.Errorf(
 				"no %s found in this directory or any parent — bind this directory with `mom project bind --id <id>` first (or pass both --project and --root)",
 				project.BindFilename)
 		}
@@ -97,21 +98,50 @@ func resolveVaultTarget() (projectID, root string, err error) {
 		root = filepath.Dir(sourceFile)
 	}
 
-	projectID = id
+	projectID = binding.ID
 	if vaultProject != "" {
 		projectID = vaultProject
 	}
 	if projectID == "" {
-		return "", "", fmt.Errorf("could not resolve a project id; pass --project")
+		return "", "", "", "", fmt.Errorf("could not resolve a project id; pass --project")
 	}
 	if root == "" {
-		return "", "", fmt.Errorf("could not resolve a project root; pass --root")
+		return "", "", "", "", fmt.Errorf("could not resolve a project root; pass --root")
 	}
 	abs, aerr := filepath.Abs(root)
 	if aerr != nil {
-		return "", "", aerr
+		return "", "", "", "", aerr
 	}
-	return projectID, abs, nil
+
+	vaultBase, vaultRef, err = resolveVaultLocation(abs, projectID)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return projectID, abs, vaultBase, vaultRef, nil
+}
+
+// resolveVaultLocation resolves the vault storage location (ADR 0026) for
+// a project given its (already-resolved) root and id: vaultBase is the
+// absolute directory the vault is read from and written to, and vaultRef
+// is the matching human-readable path for the managed context block.
+// Both default to the pre-existing project-local behaviour
+// (<root>/.mom/vault, ".mom/vault/") unless root's binding declares
+// `vault: global`. Shared by the interactive `mom vault` CLI and the
+// watch daemon's auto-fold (watch_autofold.go) so both pick the same
+// location for a given project.
+func resolveVaultLocation(root, projectID string) (vaultBase, vaultRef string, err error) {
+	binding, _, found, rerr := project.ResolveBinding(root)
+	if rerr != nil {
+		return "", "", rerr
+	}
+	if !found || !binding.VaultGlobal {
+		return projection.VaultDir(root), ".mom/vault/", nil
+	}
+	central, cerr := librarian.Dir()
+	if cerr != nil {
+		return "", "", cerr
+	}
+	return filepath.Join(central, "vault", projectID), "~/.mom/vault/" + projectID + "/", nil
 }
 
 func ledgerDir() (string, error) {
@@ -121,7 +151,7 @@ func ledgerDir() (string, error) {
 func runVaultFold(cmd *cobra.Command, rebuild bool) error {
 	p := ux.NewPrinter(cmd.OutOrStdout())
 
-	projectID, root, err := resolveVaultTarget()
+	projectID, root, vaultBase, vaultRef, err := resolveVaultTarget()
 	if err != nil {
 		return err
 	}
@@ -139,6 +169,8 @@ func runVaultFold(cmd *cobra.Command, rebuild bool) error {
 	sum, err := projection.RunProjectFold(context.Background(), projection.RunOptions{
 		ProjectID:  projectID,
 		Root:       root,
+		VaultBase:  vaultBase,
+		VaultRef:   vaultRef,
 		LedgerDir:  ldir,
 		Rebuild:    rebuild,
 		Engine:     vaultEngine,
@@ -223,7 +255,7 @@ func resolveFoldModel() string {
 func runVaultStatus(cmd *cobra.Command, _ []string) error {
 	p := ux.NewPrinter(cmd.OutOrStdout())
 
-	projectID, root, err := resolveVaultTarget()
+	projectID, _, vaultBase, _, err := resolveVaultTarget()
 	if err != nil {
 		return err
 	}
@@ -232,7 +264,7 @@ func runVaultStatus(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	st, found, err := projection.LoadFoldState(root)
+	st, found, err := projection.LoadFoldState(vaultBase)
 	if err != nil {
 		return err
 	}
@@ -248,7 +280,7 @@ func runVaultStatus(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Count vault files currently on disk.
-	files, err := projection.LoadExisting(root)
+	files, err := projection.LoadExisting(vaultBase)
 	if err != nil {
 		return err
 	}
@@ -256,7 +288,7 @@ func runVaultStatus(cmd *cobra.Command, _ []string) error {
 	p.Diamond("vault status")
 	p.Blank()
 	p.Chevron(fmt.Sprintf("project:       %s", p.HighlightValue(projectID)))
-	p.Chevron(fmt.Sprintf("vault dir:     %s", projection.VaultDir(root)))
+	p.Chevron(fmt.Sprintf("vault dir:     %s", vaultBase))
 	if found {
 		p.Chevron(fmt.Sprintf("watermark:     offset %d", st.LastOffset))
 		p.Chevron(fmt.Sprintf("last fold:     %s", st.FoldedAt.Format("2006-01-02 15:04:05 MST")))

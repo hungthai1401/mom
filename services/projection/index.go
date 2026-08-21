@@ -198,12 +198,16 @@ func dateOrEmpty(t time.Time) string {
 // it tells the agent how to navigate the OKF/ICM vault, since OKF is not yet a
 // standard the agent knows out of the box.
 func buildContextBlock(in FoldInput) string {
+	ref := in.VaultRef
+	if ref == "" {
+		ref = ".mom/vault/"
+	}
 	var b strings.Builder
 	b.WriteString("## MOM Vault (projected memory)\n\n")
-	b.WriteString("This project's memory is an **ICM** structure in **OKF** format under `.mom/vault/`. ")
+	fmt.Fprintf(&b, "This project's memory is an **ICM** structure in **OKF** format under `%s`. ", ref)
 	b.WriteString("Each folder has its own `INDEX.md`; each concept file carries `type` / `name` / ")
 	b.WriteString("`description` frontmatter — scan those to decide what to open, don't read everything.\n\n")
-	b.WriteString("1. Read `.mom/vault/INDEX.md` first — the root router (identity + routing table).\n")
+	fmt.Fprintf(&b, "1. Read `%sINDEX.md` first — the root router (identity + routing table).\n", ref)
 	b.WriteString("2. `identity.md` — what this project is.\n")
 	b.WriteString("3. `reference/` — decisions, conventions, durable facts by subject (each has its own `INDEX.md`).\n")
 	b.WriteString("4. `contracts/` — process and workflow rules for a kind of work.\n\n")

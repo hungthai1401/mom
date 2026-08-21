@@ -2,6 +2,7 @@ package projection
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
@@ -57,7 +58,7 @@ func TestFoldLock_ReleaseIdempotent(t *testing.T) {
 // the manual CLI path and the daemon both go through this gate.
 func TestRunProjectFold_HonorsFoldLock(t *testing.T) {
 	root := t.TempDir()
-	l, err := AcquireFoldLock(root)
+	l, err := AcquireFoldLock(VaultDir(root))
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -66,6 +67,31 @@ func TestRunProjectFold_HonorsFoldLock(t *testing.T) {
 	_, err = RunProjectFold(t.Context(), RunOptions{
 		ProjectID: "p",
 		Root:      root,
+		LedgerDir: t.TempDir(),
+	})
+	if !errors.Is(err, ErrFoldLocked) {
+		t.Fatalf("RunProjectFold err = %v, want ErrFoldLocked", err)
+	}
+}
+
+// ADR 0026: when RunOptions.VaultBase is set (the opt-in global vault
+// location), the fold lock is scoped to VaultBase, not Root — so a fold
+// lock held for the global vault still gates a fold pointed at that same
+// VaultBase, independent of Root.
+func TestRunProjectFold_HonorsFoldLock_AtVaultBase(t *testing.T) {
+	root := t.TempDir()
+	vaultBase := filepath.Join(t.TempDir(), "vault", "some-project-id")
+
+	l, err := AcquireFoldLock(vaultBase)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer l.Release()
+
+	_, err = RunProjectFold(t.Context(), RunOptions{
+		ProjectID: "p",
+		Root:      root,
+		VaultBase: vaultBase,
 		LedgerDir: t.TempDir(),
 	})
 	if !errors.Is(err, ErrFoldLocked) {

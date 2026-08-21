@@ -20,16 +20,21 @@ type FoldLock struct {
 	l *flock.Handle
 }
 
-// foldLockPath returns <root>/.mom/.fold.lock. The lock lives beside the
-// vault (not inside it) so a rebuild's prune can never delete it.
-func foldLockPath(root string) string {
-	return filepath.Join(root, ".mom", ".fold.lock")
+// foldLockPath returns <vaultBase>/.fold.lock. It lives as a dot-file
+// directly inside the vault content directory: pruneStaleConcepts never
+// deletes dot-files, so this is safe for both the project-local vault
+// base (<root>/.mom/vault) and the opt-in global vault base
+// (~/.mom/vault/<project-id>, which has no natural project root to keep
+// the lock "beside").
+func foldLockPath(vaultBase string) string {
+	return filepath.Join(vaultBase, ".fold.lock")
 }
 
-// AcquireFoldLock takes the project fold lock without blocking. Returns
-// ErrFoldLocked when another process holds it. Callers must Release.
-func AcquireFoldLock(root string) (*FoldLock, error) {
-	l, err := flock.TryLock(foldLockPath(root))
+// AcquireFoldLock takes the project fold lock (scoped by vault base
+// directory) without blocking. Returns ErrFoldLocked when another
+// process holds it. Callers must Release.
+func AcquireFoldLock(vaultBase string) (*FoldLock, error) {
+	l, err := flock.TryLock(foldLockPath(vaultBase))
 	if err != nil {
 		if errors.Is(err, flock.ErrLocked) {
 			return nil, ErrFoldLocked

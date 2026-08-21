@@ -37,13 +37,17 @@ type FoldState struct {
 	Chunks map[string]string `json:"chunks,omitempty"`
 }
 
-// VaultDir returns the absolute vault directory for a project root.
+// VaultDir returns the absolute project-local vault directory for a
+// project root (<root>/.mom/vault). Callers that support the opt-in
+// global vault location (ADR 0026) compute their own base directory and
+// pass it directly to LoadFoldState / LoadExisting / the Writer instead.
 func VaultDir(root string) string { return filepath.Join(root, vaultDirName) }
 
-// LoadFoldState reads the watermark for a project root. A missing file
-// is not an error — it returns a zero FoldState and found=false.
-func LoadFoldState(root string) (FoldState, bool, error) {
-	path := filepath.Join(VaultDir(root), foldStateFileName)
+// LoadFoldState reads the watermark from a vault base directory (as
+// returned by VaultDir, or the global vault base). A missing file is not
+// an error — it returns a zero FoldState and found=false.
+func LoadFoldState(base string) (FoldState, bool, error) {
+	path := filepath.Join(base, foldStateFileName)
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return FoldState{}, false, nil
@@ -59,10 +63,10 @@ func LoadFoldState(root string) (FoldState, bool, error) {
 }
 
 // LoadExisting reads all current vault markdown files (except INDEX.md
-// and the fold-state) into a path→content map keyed by vault-relative
-// path. Used to feed incremental synthesis.
-func LoadExisting(root string) (map[string]string, error) {
-	base := VaultDir(root)
+// and the fold-state) from a vault base directory (as returned by
+// VaultDir, or the global vault base) into a path→content map keyed by
+// vault-relative path. Used to feed incremental synthesis.
+func LoadExisting(base string) (map[string]string, error) {
 	out := map[string]string{}
 	err := filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -100,10 +104,22 @@ func LoadExisting(root string) (map[string]string, error) {
 	return out, nil
 }
 
-// Writer materializes a FoldResult under <root>/.mom/vault and updates
-// the managed context block in each harness entry file.
+// Writer materializes a FoldResult under VaultBase and updates the managed
+// context block in each harness entry file under Root.
+//
+// The two are deliberately independent (ADR 0026): Root is always the
+// real project directory — entry files (CLAUDE.md/AGENTS.md) must live
+// there for the agent to find them regardless of where the vault content
+// itself is stored. VaultBase defaults to <Root>/.mom/vault (the
+// pre-existing project-local behaviour) but a caller opting into the
+// global vault location points it at a project-id-keyed directory under
+// the central ~/.mom store instead.
 type Writer struct {
 	Root string
+	// VaultBase is the absolute directory vault content is read from and
+	// written to. Empty means VaultDir(Root) (project-local, unchanged
+	// default behaviour).
+	VaultBase string
 	// EntryFiles are the project-root harness entry files (CLAUDE.md for
 	// Claude Code, AGENTS.md for Codex/Pi and other agents) that receive the
 	// managed context block. Empty → CLAUDE.md only. MOM is harness-agnostic:
@@ -111,8 +127,26 @@ type Writer struct {
 	EntryFiles []string
 }
 
-// NewWriter binds a Writer to a project root.
-func NewWriter(root string) *Writer { return &Writer{Root: root} }
+// NewWriter binds a Writer to a project root, with the vault content
+// stored at the project-local default (VaultDir(root)). Use NewWriterAt
+// when the vault content lives elsewhere (the opt-in global location).
+func NewWriter(root string) *Writer { return &Writer{Root: root, VaultBase: VaultDir(root)} }
+
+// NewWriterAt binds a Writer whose entry files live at entryRoot (the
+// real project directory) while its vault content lives at the separate
+// vaultBase directory. Used for the opt-in global vault location.
+func NewWriterAt(entryRoot, vaultBase string) *Writer {
+	return &Writer{Root: entryRoot, VaultBase: vaultBase}
+}
+
+// base returns the resolved vault content directory, defaulting to the
+// project-local VaultDir(Root) when VaultBase was left unset.
+func (w *Writer) base() string {
+	if w.VaultBase != "" {
+		return w.VaultBase
+	}
+	return VaultDir(w.Root)
+}
 
 // WriteResult reports what Write did.
 type WriteResult struct {
@@ -129,7 +163,7 @@ type WriteResult struct {
 // interruption (Ctrl-C, crash) to at most one call — the next fold resumes
 // from the watermark and the chunk cache skips everything already done.
 func (w *Writer) Checkpoint(files map[string]string, chunks map[string]string, watermark uint64) error {
-	base := VaultDir(w.Root)
+	base := w.base()
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return fmt.Errorf("mkdir vault: %w", err)
 	}
@@ -151,7 +185,7 @@ func (w *Writer) Checkpoint(files map[string]string, chunks map[string]string, w
 // the on-disk vault exactly matches the freshly synthesized set — otherwise a
 // structure change would leave the old layout lingering beside the new one.
 func (w *Writer) Write(res FoldResult, head uint64, eventsFolded int, prune bool) (WriteResult, error) {
-	base := VaultDir(w.Root)
+	base := w.base()
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return WriteResult{}, fmt.Errorf("mkdir vault: %w", err)
 	}
