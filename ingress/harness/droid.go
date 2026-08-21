@@ -140,8 +140,13 @@ func (a *DroidAdapter) DetectHarness() bool {
 	return false
 }
 
+// GlobalContextPath implements GlobalAdapter.
+func (a *DroidAdapter) GlobalContextPath() (string, error) {
+	return homePath(".factory", "AGENTS.md")
+}
+
 func (a *DroidAdapter) GenerateGlobalContextFile(config Config, constraints []Constraint, skills []Skill, identity *Identity) error {
-	path, err := homePath(".factory", "AGENTS.md")
+	path, err := a.GlobalContextPath()
 	if err != nil {
 		return err
 	}

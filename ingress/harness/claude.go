@@ -100,8 +100,13 @@ func (a *ClaudeAdapter) DetectHarness() bool {
 	return false
 }
 
+// GlobalContextPath implements GlobalAdapter.
+func (a *ClaudeAdapter) GlobalContextPath() (string, error) {
+	return homePath(".claude", "CLAUDE.md")
+}
+
 func (a *ClaudeAdapter) GenerateGlobalContextFile(config Config, constraints []Constraint, skills []Skill, identity *Identity) error {
-	path, err := homePath(".claude", "CLAUDE.md")
+	path, err := a.GlobalContextPath()
 	if err != nil {
 		return err
 	}

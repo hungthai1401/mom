@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/momhq/mom/ingress/harness"
 	"github.com/momhq/mom/ops/daemon"
 	"github.com/momhq/mom/shared/ux"
 	"github.com/momhq/mom/storage/ledger"
@@ -99,19 +99,15 @@ func checkWatchDaemon() Check {
 }
 
 func checkHarnessContext() Check {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Check{Name: "harness context", Status: StatusFail, Detail: err.Error()}
-	}
 	// MOM is harness-agnostic: the global context block may live in any
 	// supported harness's home file. Pass if the block is present in ANY of
 	// them, so a Codex-only or Pi-only install is not reported as broken.
-	globalContextFiles := map[string]string{
-		"claude": filepath.Join(home, ".claude", "CLAUDE.md"),
-		"codex":  filepath.Join(home, ".codex", "AGENTS.md"),
-		"pi":     filepath.Join(home, ".pi", "AGENTS.md"),
-		"droid":  filepath.Join(home, ".factory", "AGENTS.md"),
-	}
+	//
+	// The paths come from the adapters themselves — the same code that wrote
+	// the block. Doctor used to keep its own copy of the list and drifted:
+	// it looked for pi at ~/.pi/AGENTS.md while the adapter writes
+	// ~/.pi/agent/AGENTS.md, so a working Pi-only install failed the check.
+	globalContextFiles := harness.NewRegistry("").GlobalContextPaths()
 	var present []string
 	for name, path := range globalContextFiles {
 		data, rerr := os.ReadFile(path)
@@ -122,7 +118,7 @@ func checkHarnessContext() Check {
 	if len(present) == 0 {
 		return Check{Name: "harness context", Status: StatusFail,
 			Detail:     "no harness context file carries the MOM block",
-			NextAction: "run 'mom init' (add --harnesses to pick claude, codex, or pi)"}
+			NextAction: "run 'mom init' (add --harnesses to pick claude, codex, pi, or droid)"}
 	}
 	sort.Strings(present)
 	return Check{Name: "harness context", Status: StatusPass,

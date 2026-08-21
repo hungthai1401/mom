@@ -80,8 +80,13 @@ func (a *PiAdapter) DetectHarness() bool {
 	return false
 }
 
+// GlobalContextPath implements GlobalAdapter.
+func (a *PiAdapter) GlobalContextPath() (string, error) {
+	return homePath(".pi", "agent", "AGENTS.md")
+}
+
 func (a *PiAdapter) GenerateGlobalContextFile(config Config, constraints []Constraint, skills []Skill, identity *Identity) error {
-	path, err := homePath(".pi", "agent", "AGENTS.md")
+	path, err := a.GlobalContextPath()
 	if err != nil {
 		return err
 	}
