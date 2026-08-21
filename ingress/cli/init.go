@@ -369,7 +369,7 @@ func guideProjectBinding(cwd string, result OnboardingResult, p *ux.Printer) str
 	if strings.TrimSpace(id) == "" {
 		id = deriveProjectId(cwd)
 	}
-	if err := project.WriteBinding(cwd, id, false); err != nil {
+	if err := project.WriteBinding(cwd, id, false, false); err != nil {
 		return ""
 	}
 	p.Checkf("Bound this directory to project %s (capture starts now)", p.HighlightValue(id))

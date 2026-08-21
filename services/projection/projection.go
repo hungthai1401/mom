@@ -172,8 +172,13 @@ type FoldEvent struct {
 type FoldInput struct {
 	ProjectID   string
 	ProjectRoot string
-	FromOffset  uint64
-	ToOffset    uint64
+	// VaultRef is the human-readable path shown in the managed context
+	// block for navigating the vault. Empty defaults to ".mom/vault/"
+	// (see buildContextBlock) — callers using the opt-in global vault
+	// location (ADR 0026) set this to the matching display path instead.
+	VaultRef   string
+	FromOffset uint64
+	ToOffset   uint64
 	// Existing maps a vault-relative path (e.g. "topics/voice.md") to its
 	// current content. Empty on rebuild.
 	Existing map[string]string

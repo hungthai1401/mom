@@ -20,6 +20,7 @@ import (
 var (
 	projectBindId    string
 	projectBindForce bool
+	projectBindVault string
 )
 
 var projectCmd = &cobra.Command{
@@ -67,13 +68,15 @@ the repository across machines, clones, and forks.
 
 Examples:
   mom project bind --id pi-agents-cli
-  mom project bind --id my-service --force   # overwrite an existing binding`,
+  mom project bind --id my-service --force   # overwrite an existing binding
+  mom project bind --id my-service --vault global   # vault under ~/.mom instead of the project dir`,
 	RunE: runProjectBind,
 }
 
 func init() {
 	projectBindCmd.Flags().StringVar(&projectBindId, "id", "", "Project id to declare (required)")
 	projectBindCmd.Flags().BoolVar(&projectBindForce, "force", false, "Overwrite an existing binding with a different id")
+	projectBindCmd.Flags().StringVar(&projectBindVault, "vault", "project", "Where mom vault fold stores this project's vault: project (default, <root>/.mom/vault) | global (~/.mom/vault/<id>)")
 	_ = projectBindCmd.MarkFlagRequired("id")
 	projectCmd.AddCommand(projectBindCmd)
 }
@@ -83,7 +86,11 @@ func runProjectBind(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("getting cwd: %w", err)
 	}
-	if err := project.WriteBinding(cwd, projectBindId, projectBindForce); err != nil {
+	vaultGlobal, err := parseVaultLocationFlag(projectBindVault)
+	if err != nil {
+		return err
+	}
+	if err := project.WriteBinding(cwd, projectBindId, projectBindForce, vaultGlobal); err != nil {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "bound %s to project %q\n", cwd, projectBindId)
@@ -106,4 +113,17 @@ func runProjectBind(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: registering with watch daemon: %v\n", err)
 	}
 	return nil
+}
+
+// parseVaultLocationFlag validates the --vault flag value shared by
+// `mom project bind` and returns whether it selects the global vault.
+func parseVaultLocationFlag(v string) (bool, error) {
+	switch v {
+	case "", "project":
+		return false, nil
+	case "global":
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid --vault value %q (want %q or %q)", v, "project", "global")
+	}
 }

@@ -100,3 +100,32 @@ func TestBuildIndexRoutesICMLayout(t *testing.T) {
 		t.Errorf("router still emits the stale slug-echo hint:\n%s", idx)
 	}
 }
+
+// ADR 0026: the managed context block's vault path is driven by
+// FoldInput.VaultRef so a project using the opt-in global vault location
+// points the agent at the right place. Empty VaultRef keeps the
+// pre-existing ".mom/vault/" default.
+func TestBuildContextBlock_VaultRef(t *testing.T) {
+	t.Run("empty VaultRef defaults to project-local", func(t *testing.T) {
+		block := buildContextBlock(FoldInput{ProjectID: "demo", ToOffset: 5})
+		if !strings.Contains(block, "under `.mom/vault/`") {
+			t.Errorf("expected default .mom/vault/ reference, got:\n%s", block)
+		}
+		if !strings.Contains(block, "`.mom/vault/INDEX.md`") {
+			t.Errorf("expected default INDEX.md reference, got:\n%s", block)
+		}
+	})
+
+	t.Run("global VaultRef is used verbatim", func(t *testing.T) {
+		block := buildContextBlock(FoldInput{ProjectID: "demo", ToOffset: 5, VaultRef: "~/.mom/vault/demo/"})
+		if !strings.Contains(block, "under `~/.mom/vault/demo/`") {
+			t.Errorf("expected global vault reference, got:\n%s", block)
+		}
+		if !strings.Contains(block, "`~/.mom/vault/demo/INDEX.md`") {
+			t.Errorf("expected global INDEX.md reference, got:\n%s", block)
+		}
+		if strings.Contains(block, "under `.mom/vault/`") {
+			t.Errorf("expected no leftover project-local reference, got:\n%s", block)
+		}
+	})
+}

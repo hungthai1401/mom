@@ -11,9 +11,22 @@ import (
 // callers must never diverge in fold semantics.
 type RunOptions struct {
 	ProjectID string
-	Root      string // project root; the vault lives at <root>/.mom/vault
+	Root      string // project root; entry files (CLAUDE.md/AGENTS.md) always live here
 	LedgerDir string
 	Rebuild   bool // fold from offset 0 and prune on full completion
+
+	// VaultBase overrides where the vault content itself is stored.
+	// Empty (the default) → VaultDir(Root), i.e. <root>/.mom/vault,
+	// unchanged from pre-ADR-0026 behaviour. Set this to a project-id-keyed
+	// directory under the central ~/.mom store to opt a project into the
+	// global vault location; Root still governs entry-file placement.
+	VaultBase string
+	// VaultRef is the human-readable path shown in the managed context
+	// block that tells the agent where to read the vault. Empty defaults
+	// to ".mom/vault/" (the project-local reference). Callers using
+	// VaultBase for a global vault should set this to the matching
+	// display path, e.g. "~/.mom/vault/<project-id>/".
+	VaultRef string
 
 	Engine    string // "auto" (default) | "claude" | "codex" | "pi"
 	Model     string // empty = engine's cheap default (claude: haiku)
@@ -75,7 +88,16 @@ func RunProjectFold(ctx context.Context, opts RunOptions) (RunSummary, error) {
 		warn = func(string) {}
 	}
 
-	lock, err := AcquireFoldLock(opts.Root)
+	base := opts.VaultBase
+	if base == "" {
+		base = VaultDir(opts.Root)
+	}
+	vaultRef := opts.VaultRef
+	if vaultRef == "" {
+		vaultRef = ".mom/vault/"
+	}
+
+	lock, err := AcquireFoldLock(base)
 	if err != nil {
 		return RunSummary{}, err
 	}
@@ -85,7 +107,7 @@ func RunProjectFold(ctx context.Context, opts RunOptions) (RunSummary, error) {
 	var fromOffset uint64
 	var existingChunks map[string]string
 	if !opts.Rebuild {
-		st, found, serr := LoadFoldState(opts.Root)
+		st, found, serr := LoadFoldState(base)
 		if serr != nil {
 			return RunSummary{}, serr
 		}
@@ -103,7 +125,7 @@ func RunProjectFold(ctx context.Context, opts RunOptions) (RunSummary, error) {
 
 	existing := map[string]string{}
 	if !opts.Rebuild {
-		existing, err = LoadExisting(opts.Root)
+		existing, err = LoadExisting(base)
 		if err != nil {
 			return RunSummary{}, err
 		}
@@ -114,11 +136,12 @@ func RunProjectFold(ctx context.Context, opts RunOptions) (RunSummary, error) {
 		return RunSummary{}, err
 	}
 
-	writer := NewWriter(opts.Root)
+	writer := NewWriterAt(opts.Root, base)
 	writer.EntryFiles = opts.EntryFiles
 	in := FoldInput{
 		ProjectID:      opts.ProjectID,
 		ProjectRoot:    opts.Root,
+		VaultRef:       vaultRef,
 		FromOffset:     fromOffset,
 		ToOffset:       read.Head,
 		Existing:       existing,

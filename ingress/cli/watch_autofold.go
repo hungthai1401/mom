@@ -52,10 +52,19 @@ func startAutofold(ctx context.Context, momDir string) func(projectID, harness s
 		Tracker: tracker,
 		RootFor: registryRootForProject,
 		Fold: func(ctx context.Context, projectID, root string) (projection.RunSummary, error) {
+			// Same vault-location resolution as `mom vault fold` (ADR
+			// 0026), so a project that opted into the global vault gets it
+			// from auto-fold too.
+			vaultBase, vaultRef, verr := resolveVaultLocation(root, projectID)
+			if verr != nil {
+				return projection.RunSummary{}, verr
+			}
 			return projection.RunProjectFold(ctx, projection.RunOptions{
-				ProjectID: projectID,
-				Root:      root,
-				LedgerDir: ldir,
+				ProjectID:  projectID,
+				Root:       root,
+				VaultBase:  vaultBase,
+				VaultRef:   vaultRef,
+				LedgerDir:  ldir,
 				Engine:     "auto",
 				Model:      cfg.Vault.FoldModel,
 				EntryFiles: cfg.EntryFiles(),

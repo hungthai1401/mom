@@ -37,7 +37,7 @@ func TestFoldStateRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, found, err := LoadFoldState(root)
+	got, found, err := LoadFoldState(vaultBase)
 	if err != nil {
 		t.Fatalf("LoadFoldState: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestFoldStateRoundTrip(t *testing.T) {
 
 func TestLoadFoldStateMissing(t *testing.T) {
 	root := t.TempDir()
-	_, found, err := LoadFoldState(root)
+	_, found, err := LoadFoldState(VaultDir(root))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,5 +207,47 @@ func TestWritePruneRefusesEmptyFreshSet(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(VaultDir(root), "episodes", "aaa.md")); err != nil {
 		t.Errorf("existing episode was pruned by an empty synthesis: %v", err)
+	}
+}
+
+// ADR 0026: NewWriterAt separates entry-file placement from vault content
+// storage. Entry files (CLAUDE.md/AGENTS.md) must land at entryRoot — the
+// real project directory — even when vault content is stored elsewhere
+// (the opt-in global vault location).
+func TestNewWriterAt_SeparatesEntryFilesFromVaultContent(t *testing.T) {
+	entryRoot := t.TempDir()
+	vaultBase := filepath.Join(t.TempDir(), "vault", "some-project-id")
+
+	w := NewWriterAt(entryRoot, vaultBase)
+	w.EntryFiles = []string{"CLAUDE.md"}
+
+	res := FoldResult{
+		Files:        map[string]string{"identity.md": "# demo\n"},
+		Index:        "# idx\n",
+		ContextBlock: "## MOM Vault\n",
+	}
+	wres, err := w.Write(res, 5, 1, false)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// Vault content lands at vaultBase, NOT under entryRoot/.mom/vault.
+	if _, err := os.Stat(filepath.Join(vaultBase, "identity.md")); err != nil {
+		t.Errorf("expected vault content at vaultBase, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(entryRoot, ".mom")); err == nil {
+		t.Error("entryRoot must not gain a .mom/vault subtree when VaultBase is set")
+	}
+	if wres.VaultDir != vaultBase {
+		t.Errorf("WriteResult.VaultDir = %q, want %q", wres.VaultDir, vaultBase)
+	}
+
+	// Entry file lands at entryRoot, the real project directory.
+	entryPath := filepath.Join(entryRoot, "CLAUDE.md")
+	if _, err := os.Stat(entryPath); err != nil {
+		t.Errorf("expected CLAUDE.md at entryRoot, got: %v", err)
+	}
+	if len(wres.EntryPaths) != 1 || wres.EntryPaths[0] != entryPath {
+		t.Errorf("EntryPaths = %v, want [%q]", wres.EntryPaths, entryPath)
 	}
 }

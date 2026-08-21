@@ -18,6 +18,12 @@ import (
 // so tests cannot mutate the developer's real ~/.mom (#388: bind now
 // touches the global watch registry when MOM is initialized).
 func execProjectBind(t *testing.T, dir, id string, force bool) (string, error) {
+	return execProjectBindVault(t, dir, id, force, "")
+}
+
+// execProjectBindVault is execProjectBind with an extra --vault value
+// (empty means the flag is omitted, exercising its "project" default).
+func execProjectBindVault(t *testing.T, dir, id string, force bool, vault string) (string, error) {
 	t.Helper()
 	if os.Getenv("MOM_VAULT") == "" {
 		isolated := t.TempDir()
@@ -36,6 +42,9 @@ func execProjectBind(t *testing.T, dir, id string, force bool) (string, error) {
 	args := []string{"project", "bind", "--id", id}
 	if force {
 		args = append(args, "--force")
+	}
+	if vault != "" {
+		args = append(args, "--vault", vault)
 	}
 	rootCmd.SetArgs(args)
 	err := rootCmd.Execute()
@@ -206,4 +215,44 @@ func TestProjectBind_SameIdIsIdempotent(t *testing.T) {
 	if _, err := execProjectBind(t, dir, "alpha", false); err != nil {
 		t.Errorf("re-binding to same id should succeed without --force, got: %v", err)
 	}
+}
+
+// ADR 0026: `--vault global` writes the opt-in vault: global line; the
+// explicit `--vault project` (and the flag's own default) write no
+// vault: line at all, keeping the file byte-identical for users who
+// never opt in. Every case below passes --vault explicitly so it is
+// immune to any flag-value bleed from earlier tests in this file.
+func TestProjectBind_VaultFlag(t *testing.T) {
+	t.Run("global writes vault: global", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := execProjectBindVault(t, dir, "alpha", false, "global"); err != nil {
+			t.Fatalf("bind --vault global: %v", err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, ".mom-project.yaml"))
+		if !strings.Contains(string(data), "vault: global") {
+			t.Errorf("expected vault: global in file, got:\n%s", data)
+		}
+	})
+
+	t.Run("project omits the vault line", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := execProjectBindVault(t, dir, "alpha", false, "project"); err != nil {
+			t.Fatalf("bind --vault project: %v", err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, ".mom-project.yaml"))
+		if strings.Contains(string(data), "vault:") {
+			t.Errorf("expected no vault: line for --vault project, got:\n%s", data)
+		}
+	})
+
+	t.Run("invalid value rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		out, err := execProjectBindVault(t, dir, "alpha", false, "everywhere")
+		if err == nil {
+			t.Fatalf("expected error for --vault everywhere; output:\n%s", out)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, ".mom-project.yaml")); statErr == nil {
+			t.Errorf("bind file must not be written when --vault is invalid")
+		}
+	})
 }
