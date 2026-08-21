@@ -118,17 +118,10 @@ func removeGlobalWatchDaemon(p *ux.Printer) error {
 }
 
 func removeGlobalHarnessContext(p *ux.Printer) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	// Known global context files per registered harness.
-	paths := []string{
-		filepath.Join(home, ".claude", "CLAUDE.md"),
-		filepath.Join(home, ".codex", "AGENTS.md"),
-		filepath.Join(home, ".factory", "AGENTS.md"),
-	}
-	for _, path := range paths {
+	// Ask each registered adapter where it put its block instead of keeping a
+	// second list here — the hand-maintained copy had gone stale and skipped
+	// pi entirely, leaving the MOM block behind after an uninstall.
+	for _, path := range harness.NewRegistry("").GlobalContextPaths() {
 		if err := harness.RemoveManagedBlock(path); err != nil {
 			p.Warnf("stripping MOM block from %s: %v", path, err)
 			continue

@@ -55,3 +55,25 @@ func (r *Registry) All() []Adapter {
 	}
 	return all
 }
+
+// GlobalContextPaths returns the user-level context file each registered
+// GlobalAdapter manages, keyed by harness name. Callers that need to read or
+// strip the MOM managed block (`mom doctor`, `mom uninstall`) go through this
+// instead of rebuilding the paths, so there is exactly one definition of
+// where each harness keeps its block. Adapters whose path cannot be resolved
+// (no home directory) are omitted.
+func (r *Registry) GlobalContextPaths() map[string]string {
+	paths := make(map[string]string)
+	for _, name := range r.order {
+		global, ok := r.adapters[name].(GlobalAdapter)
+		if !ok {
+			continue
+		}
+		path, err := global.GlobalContextPath()
+		if err != nil {
+			continue
+		}
+		paths[name] = path
+	}
+	return paths
+}

@@ -17,6 +17,13 @@ const (
 // projects through user-level configuration.
 type GlobalAdapter interface {
 	Adapter
+	// GlobalContextPath returns the absolute path of the user-level file
+	// that carries the MOM managed block. It is the single source of truth
+	// for that location: GenerateGlobalContextFile writes there, and
+	// `mom doctor` / `mom uninstall` read and strip the block there. Adding
+	// a second hardcoded copy of the path anywhere else is how the two
+	// drift apart.
+	GlobalContextPath() (string, error)
 	GenerateGlobalContextFile(config Config, constraints []Constraint, skills []Skill, identity *Identity) error
 }
 

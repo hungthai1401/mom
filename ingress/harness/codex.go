@@ -286,8 +286,13 @@ func (a *CodexAdapter) DetectHarness() bool {
 	return false
 }
 
+// GlobalContextPath implements GlobalAdapter.
+func (a *CodexAdapter) GlobalContextPath() (string, error) {
+	return codexHomePath("AGENTS.md")
+}
+
 func (a *CodexAdapter) GenerateGlobalContextFile(config Config, constraints []Constraint, skills []Skill, identity *Identity) error {
-	path, err := codexHomePath("AGENTS.md")
+	path, err := a.GlobalContextPath()
 	if err != nil {
 		return err
 	}
