@@ -39,7 +39,29 @@ const BindFileWatermark = `# MOM project binding — owned by you, not regenerat
 type bindFile struct {
 	Version string `yaml:"version"`
 	ID      string `yaml:"id"`
+	// Vault selects where `mom vault fold` stores this project's vault:
+	// "" or "project" (default) → <project-root>/.mom/vault/; "global" →
+	// a project-id-keyed directory under the central ~/.mom store, so the
+	// generated markdown never lands next to the repo's own docs/adr.
+	// Opt-in and additive — absent means the pre-existing project-local
+	// behaviour, unchanged.
+	Vault string `yaml:"vault,omitempty"`
 }
+
+// Binding is the full declared identity of a project: its id and its
+// vault storage preference. ResolveProject remains the thin, widely-used
+// accessor for just the id; ResolveBinding is for callers (the vault fold
+// path) that also need to know where the vault should live.
+type Binding struct {
+	ID string
+	// VaultGlobal is true when the project declared `vault: global`.
+	VaultGlobal bool
+}
+
+// validVaultValues are the only strings accepted for the `vault:` key.
+// Anything else is a pathological value per the same lax-but-bounded
+// philosophy as id validation.
+var validVaultValues = map[string]bool{"": true, "project": true, "global": true}
 
 // ResolveProject walks up from cwd looking for the nearest
 // .mom-project.yaml file and returns its declared id. Returns
@@ -59,40 +81,55 @@ type bindFile struct {
 // Returns an error only for I/O problems other than not-found, malformed
 // YAML, or a non-pathological-id rule violation.
 func ResolveProject(cwd string) (id string, sourceFile string, found bool, err error) {
+	b, source, found, err := ResolveBinding(cwd)
+	if err != nil || !found {
+		return "", "", found, err
+	}
+	return b.ID, source, true, nil
+}
+
+// ResolveBinding is ResolveProject's superset: same walk-up and longest-
+// ancestor semantics, but returns the full declared Binding (id + vault
+// preference) rather than just the id. Callers that only need the id
+// should keep using ResolveProject.
+func ResolveBinding(cwd string) (binding Binding, sourceFile string, found bool, err error) {
 	canonical := pathutil.CanonicalDir(cwd)
 	dir := canonical
 	for {
 		candidate := filepath.Join(dir, BindFilename)
 		info, statErr := os.Stat(candidate)
 		if statErr == nil && !info.IsDir() {
-			id, err = readBindFile(candidate)
+			binding, err = readBindFile(candidate)
 			if err != nil {
-				return "", "", false, err
+				return Binding{}, "", false, err
 			}
-			return id, candidate, true, nil
+			return binding, candidate, true, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", "", false, nil
+			return Binding{}, "", false, nil
 		}
 		dir = parent
 	}
 }
 
-// readBindFile parses the YAML and validates the id.
-func readBindFile(path string) (string, error) {
+// readBindFile parses the YAML and validates the id and vault fields.
+func readBindFile(path string) (Binding, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+		return Binding{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var bf bindFile
 	if err := yaml.Unmarshal(data, &bf); err != nil {
-		return "", fmt.Errorf("parse %s: %w", path, err)
+		return Binding{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if err := validateId(bf.ID); err != nil {
-		return "", fmt.Errorf("%s: %w", path, err)
+		return Binding{}, fmt.Errorf("%s: %w", path, err)
 	}
-	return bf.ID, nil
+	if !validVaultValues[bf.Vault] {
+		return Binding{}, fmt.Errorf("%s: invalid vault value %q (want \"project\" or \"global\")", path, bf.Vault)
+	}
+	return Binding{ID: bf.ID, VaultGlobal: bf.Vault == "global"}, nil
 }
 
 // ScopeForCwd resolves the project_id filter for project-scoped CLI
@@ -159,16 +196,29 @@ func IdForCwd() (id string, found bool) {
 // Per ADR 0016 changing the id starts a fresh project from MOM's
 // perspective — old memories keep the old id; the two cohorts do not
 // merge.
-func WriteBinding(dir, id string, force bool) error {
+//
+// vaultGlobal selects the `vault:` line written: false → omitted (the
+// default project-local vault, keeping the file byte-identical for users
+// who never opt in); true → "global". Toggling vaultGlobal on an existing
+// binding with the SAME id is not an identity change, so it never requires
+// force — only a mismatched id does.
+func WriteBinding(dir, id string, force, vaultGlobal bool) error {
 	if err := validateId(id); err != nil {
 		return err
+	}
+	vaultValue := ""
+	if vaultGlobal {
+		vaultValue = "global"
 	}
 	path := filepath.Join(dir, BindFilename)
 	if existing, err := os.ReadFile(path); err == nil {
 		// File exists; compare declared id.
 		var bf bindFile
 		if uerr := yaml.Unmarshal(existing, &bf); uerr == nil && bf.ID == id {
-			return nil // idempotent re-bind
+			if bf.Vault == vaultValue {
+				return nil // idempotent re-bind
+			}
+			return writeBindFile(path, id, vaultValue)
 		}
 		if !force {
 			return fmt.Errorf("%s already declares a different project id; pass --force to overwrite", path)
@@ -176,7 +226,15 @@ func WriteBinding(dir, id string, force bool) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	return writeBindFile(path, id, vaultValue)
+}
+
+// writeBindFile renders the watermark + version/id/vault body and writes it.
+func writeBindFile(path, id, vaultValue string) error {
 	body := BindFileWatermark + "version: \"1\"\nid: " + id + "\n"
+	if vaultValue != "" {
+		body += "vault: " + vaultValue + "\n"
+	}
 	return os.WriteFile(path, []byte(body), 0o644)
 }
 

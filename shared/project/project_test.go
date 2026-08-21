@@ -3,6 +3,7 @@ package project_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/momhq/mom/shared/project"
@@ -104,6 +105,108 @@ func TestResolveProject_RejectsMalformedYaml(t *testing.T) {
 	_, _, _, err := project.ResolveProject(dir)
 	if err == nil {
 		t.Errorf("expected error for malformed YAML")
+	}
+}
+
+// ADR 0026: a project may opt into a global vault location via a `vault:`
+// field in .mom-project.yaml. Absent means project-local (VaultGlobal=false).
+func TestResolveBinding_VaultField(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantGlobal bool
+		wantErr    bool
+	}{
+		{"absent defaults to project-local", "version: \"1\"\nid: alpha\n", false, false},
+		{"explicit project", "version: \"1\"\nid: alpha\nvault: project\n", false, false},
+		{"explicit global", "version: \"1\"\nid: alpha\nvault: global\n", true, false},
+		{"invalid value rejected", "version: \"1\"\nid: alpha\nvault: everywhere\n", false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".mom-project.yaml"), []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			b, _, found, err := project.ResolveBinding(dir)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got binding=%+v", b)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveBinding: %v", err)
+			}
+			if !found {
+				t.Fatal("expected found=true")
+			}
+			if b.VaultGlobal != c.wantGlobal {
+				t.Errorf("VaultGlobal = %v, want %v", b.VaultGlobal, c.wantGlobal)
+			}
+			if b.ID != "alpha" {
+				t.Errorf("ID = %q, want alpha", b.ID)
+			}
+		})
+	}
+}
+
+// ResolveProject stays id-only and unaffected by the vault field.
+func TestResolveProject_UnaffectedByVaultField(t *testing.T) {
+	dir := t.TempDir()
+	writeBindFile(t, dir, "alpha")
+	if err := os.WriteFile(filepath.Join(dir, ".mom-project.yaml"),
+		[]byte("version: \"1\"\nid: alpha\nvault: global\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, _, found, err := project.ResolveProject(dir)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	if !found || id != "alpha" {
+		t.Errorf("ResolveProject = (%q, %v), want (alpha, true)", id, found)
+	}
+}
+
+// WriteBinding writes the vault: line only when global is requested, to
+// keep files for non-opted-in users byte-identical to the pre-ADR-0026
+// format.
+func TestWriteBinding_VaultLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := project.WriteBinding(dir, "alpha", false, false); err != nil {
+		t.Fatalf("WriteBinding: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".mom-project.yaml"))
+	if strings.Contains(string(data), "vault:") {
+		t.Errorf("expected no vault: line for project-local (default), got:\n%s", data)
+	}
+
+	dir2 := t.TempDir()
+	if err := project.WriteBinding(dir2, "beta", false, true); err != nil {
+		t.Fatalf("WriteBinding: %v", err)
+	}
+	data2, _ := os.ReadFile(filepath.Join(dir2, ".mom-project.yaml"))
+	if !strings.Contains(string(data2), "vault: global") {
+		t.Errorf("expected vault: global line, got:\n%s", data2)
+	}
+}
+
+// Toggling the vault preference on an existing binding with the SAME id
+// is not an identity change, so it must succeed without --force.
+func TestWriteBinding_TogglesVaultWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	if err := project.WriteBinding(dir, "alpha", false, false); err != nil {
+		t.Fatalf("initial bind: %v", err)
+	}
+	if err := project.WriteBinding(dir, "alpha", false, true); err != nil {
+		t.Fatalf("toggling vault without force: %v", err)
+	}
+	b, _, found, err := project.ResolveBinding(dir)
+	if err != nil || !found {
+		t.Fatalf("ResolveBinding after toggle: found=%v err=%v", found, err)
+	}
+	if !b.VaultGlobal {
+		t.Error("expected VaultGlobal=true after toggling to global")
 	}
 }
 
