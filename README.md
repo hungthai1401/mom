@@ -161,9 +161,10 @@ Upgrade regenerates the harness context blocks, tears down the retired MCP regis
 
 _Mom_ is local-first.
 
-- The append-only Ledger lives at `$HOME/.mom/ledger/`; the projected vault lives per-project under `.mom/vault/`.
+- The append-only Ledger lives at `$HOME/.mom/ledger/`; the projected vault lives per-project under `.mom/vault/` by default.
 - `MOM_VAULT=/path/to/dir` overrides the central `$HOME/.mom` location for tests or isolated runs.
 - Capture is privacy-gated: a turn is only recorded when the directory is bound to a project (`.mom-project.yaml`).
+- A project whose own `docs/`/`adr/` would otherwise duplicate the vault's content can opt into a **global vault** instead: `mom project bind --id <id> --vault global` stores that project's vault at `~/.mom/vault/<id>/` rather than in the repo, keyed by the same portable `id` on every machine (ADR 0026).
 - Lens uses privacy-projected metadata.
 - Raw tool arguments, raw user text, shell command arguments, query strings, paths, and flags are not stored as operational log detail.
 - Explicit record flows reject invented session IDs; harness session IDs must come from the harness.
